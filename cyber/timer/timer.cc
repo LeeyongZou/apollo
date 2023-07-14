@@ -28,19 +28,23 @@ std::atomic<uint64_t> global_timer_id = {0};
 uint64_t GenerateTimerId() { return global_timer_id.fetch_add(1); }
 }  // namespace
 
-Timer::Timer() {
+Timer::Timer(const std::string &name) {
   timing_wheel_ = TimingWheel::Instance();
   timer_id_ = GenerateTimerId();
+  name_ = (0 < name.size())? name : "timer_"+std::to_string(timer_id_);
 }
 
-Timer::Timer(TimerOption opt) : timer_opt_(opt) {
+Timer::Timer(TimerOption opt, const std::string &name) : timer_opt_(opt) {
   timing_wheel_ = TimingWheel::Instance();
   timer_id_ = GenerateTimerId();
+  name_ = (0 < name.size())? name : "timer_"+std::to_string(timer_id_);
 }
 
-Timer::Timer(uint32_t period, std::function<void()> callback, bool oneshot) {
+Timer::Timer(uint32_t period, std::function<void()> callback,
+             bool oneshot, const std::string &name) {
   timing_wheel_ = TimingWheel::Instance();
   timer_id_ = GenerateTimerId();
+  name_ = (0 < name.size())? name : "timer_"+std::to_string(timer_id_);
   timer_opt_.period = period;
   timer_opt_.callback = callback;
   timer_opt_.oneshot = oneshot;
@@ -60,6 +64,7 @@ bool Timer::InitTimerTask() {
   }
 
   task_.reset(new TimerTask(timer_id_));
+  task_->async_task = true;
   task_->interval_ms = timer_opt_.period;
   task_->next_fire_duration_ms = task_->interval_ms;
   if (timer_opt_.oneshot) {
@@ -72,15 +77,32 @@ bool Timer::InitTimerTask() {
       }
     };
   } else {
+    task_->async_task = false;
+
+    // register coroutine
+    auto func = [callback = this->timer_opt_.callback]() {
+      while (true) {
+        callback();
+        auto routine = croutine::CRoutine::GetCurrentRoutine();
+        routine->HangUp();
+      }
+    };
+    auto factory = croutine::CreateRoutineFactory(std::move(func));
+    coroutine_id_ = common::GlobalData::RegisterTaskName(name_);
+    if (!scheduler::Instance()->CreateTask(factory, name_)) {
+      AERROR << "CreateTask failed:" << name_;
+    }
+    
+    // timer task to weakup coroutine
     std::weak_ptr<TimerTask> task_weak_ptr = task_;
-    task_->callback = [callback = this->timer_opt_.callback, task_weak_ptr]() {
+    task_->callback = [coroutine_id = coroutine_id_, task_weak_ptr]() {
       auto task = task_weak_ptr.lock();
       if (!task) {
         return;
       }
       std::lock_guard<std::mutex> lg(task->mutex);
       auto start = Time::MonoTime().ToNanosecond();
-      callback();
+      scheduler::Instance()->NotifyTask(coroutine_id);
       auto end = Time::MonoTime().ToNanosecond();
       uint64_t execute_time_ns = end - start;
       uint64_t execute_time_ms =

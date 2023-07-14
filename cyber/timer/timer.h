@@ -70,14 +70,20 @@ struct TimerOption {
  */
 class Timer {
  public:
-  Timer();
+  /**
+   * @brief Construct a new Timer object
+   *
+   * @param name The name of timer, default is "timer_<id>"
+   */
+  Timer(const std::string &name="");
 
   /**
    * @brief Construct a new Timer object
    *
    * @param opt Timer option
+   * @param name The name of timer, default is "timer_<id>"
    */
-  explicit Timer(TimerOption opt);
+  explicit Timer(TimerOption opt, const std::string &name="");
 
   /**
    * @brief Construct a new Timer object
@@ -86,8 +92,10 @@ class Timer {
    * @param callback The tasks that the timer needs to perform
    * @param oneshot True: perform the callback only after the first timing cycle
    *                False: perform the callback every timed period
+   * @param name The name of timer, default is "timer_<id>"
    */
-  Timer(uint32_t period, std::function<void()> callback, bool oneshot);
+  Timer(uint32_t period, std::function<void()> callback, 
+        bool oneshot=false, const std::string &name="");
   ~Timer();
 
   /**
@@ -116,6 +124,8 @@ class Timer {
   TimingWheel* timing_wheel_ = nullptr;
   std::shared_ptr<TimerTask> task_;
   std::atomic<bool> started_ = {false};
+  std::string name_;
+  uint64_t coroutine_id_;
 };
 
 }  // namespace cyber
